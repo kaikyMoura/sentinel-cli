@@ -1,4 +1,4 @@
-# AI Code Analyzer CLI - Technical Documentation
+<h1 align="center">Sentinel - CLI</h1>
 
 ## 1. Project Overview
 
