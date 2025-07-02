@@ -1,7 +1,3 @@
-Of course. As a senior software engineer, here is a professional, clear, and concise technical documentation for the provided AI Code Analyzer CLI tool, written in Markdown.
-
----
-
 # AI Code Analyzer CLI - Technical Documentation
 
 ## 1. Project Overview
