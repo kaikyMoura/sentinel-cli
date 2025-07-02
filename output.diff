@@ -1,0 +1,306 @@
+```diff
+--- a/main.py
++++ b/main.py
+@@ -1,88 +1,142 @@
+ import os
+-import zipfile
++import sys
++from enum import Enum
++from pathlib import Path
++from typing import Dict, Optional
++
++import git
+ import typer
+ from dotenv import load_dotenv
+-from pathlib import Path
+ 
+ from src.ai_analyzer import get_client, generate_ai_analysis
+-from src.git_utils import get_staged_diff, get_staged_files_content
+-from src.file_handler import process_zip_file 
++from src.file_handler import process_zip_file
++from src.git_utils import (get_all_tracked_files_content, get_staged_diff,
++                           get_staged_files_content)
+ 
+ load_dotenv()
+ 
+ app = typer.Typer(
+-    name="AI Code Analyzer",
+-    help="A command line to analyze your code with Google's Gemini AI.",
++    name="ai-code-analyzer",
++    help="A CLI tool to analyze code using Google's Gemini AI.",
+     no_args_is_help=True,
+ )
+ 
++class AITask(str, Enum):
++    IMPROVEMENTS = "improvements"
++    DOCUMENTATION = "documentation"
++    COMMITS = "commits"
++    APPLY_IMPROVEMENTS = "apply-improvements"
++
++
++def _build_context_from_files(files: Dict[str, str]) -> str:
++    """Builds a single string context from a dictionary of file contents."""
++    return "\n\n".join(
++        f"--- Start of file: {path} ---\n{content}\n--- End of file: {path} ---"
++        for path, content in files.items()
++    )
++
++
++def _get_git_context(task: AITask) -> Optional[str]:
++    """
++    Retrieves the code context from the Git repository based on the specified task.
++    """
++    try:
++        repo = git.Repo(search_parent_directories=True)
++    except git.InvalidGitRepositoryError:
++        typer.secho(
++            "Error: Not a Git repository. Run this command in a repository or use --path.",
++            fg=typer.colors.RED,
++        )
++        raise typer.Exit(code=1)
++
++    if task == AITask.DOCUMENTATION:
++        typer.echo("🔍 Reading all tracked files to generate documentation...")
++        files = get_all_tracked_files_content(repo)
++        if not files:
++            typer.secho("✅ No tracked files found in the repository.", fg=typer.colors.GREEN)
++            return None
++        return _build_context_from_files(files)
++
++    # For improvements, commits, and apply-improvements, we check the staging area.
++    typer.echo("🔍 Analyzing staged changes in the Git repository...")
++
++    if task in [AITask.COMMITS, AITask.APPLY_IMPROVEMENTS]:
++        context = get_staged_diff(repo)
++    else:  # AITask.IMPROVEMENTS
++        files = get_staged_files_content(repo)
++        context = _build_context_from_files(files) if files else ""
++
++    if not context:
++        typer.secho("✅ No staged changes detected.", fg=typer.colors.GREEN)
++        return None
++
++    return context
++
+ 
+ @app.command()
+ def analyze(
+-    task: str = typer.Argument(
++    task: AITask = typer.Argument(
+         ...,
+-        help="Type of analysis: [improvements|documentation|commits|apply-improvements]",
++        help="The AI analysis task to perform.",
++        case_sensitive=False,
+     ),
+     path: Path = typer.Option(
+-        None, "--path", "-p",
+-        help="Path to a project .zip file. If not provided, uses Git changes."
++        None,
++        "--path",
++        "-p",
++        help="Path to a project .zip file. If provided, Git-based analysis is skipped.",
+     ),
+     output: str = typer.Option(
+-        "output.md", "--output", "-o", help="Output file for the result."
++        "output.md", "--output", "-o", help="Path to the output file."
+     ),
+     api_key: str = typer.Option(
+-        None, "--api-key", help="Your Gemini API key.",
+-        envvar="GEMINI_API_KEY"
++        None,
++        "--api-key",
++        help="Your Gemini API key. Defaults to GEMINI_API_KEY environment variable.",
++        envvar="GEMINI_API_KEY",
++        show_default=False,
+     ),
+     model: str = typer.Option(
+-        "gemini-2.5-pro", "--model", help="Gemini model to use."
++        "gemini-1.5-pro-latest", "--model", help="The Gemini model to use for the analysis."
+     ),
+     ci_mode: bool = typer.Option(
+-        False, "--ci", help="CI mode: fails if the analysis finds issues."
+-    )
++        False,
++        "--ci",
++        help="Enable CI mode. If the 'improvements' task finds issues, the command will exit with a non-zero status code.",
++    ),
+ ):
+     """
+-    Analyzes the code and performs an AI task.
++    Analyzes code using Google's Gemini AI to suggest improvements, generate
++    documentation, create commit messages, or produce refactoring patches.
+     """
+     if not api_key:
+-        print("❌ Gemini API key not found.")
+-        print("Please set the GEMINI_API_KEY environment variable or use the --api-key option.")
+-        raise typer.Exit(code=1)
++        typer.secho("Error: Gemini API key not found.", fg=typer.colors.RED)
++        typer.echo("Please set the GEMINI_API_KEY environment variable or use the --api-key option.")
++        raise typer.Exit(code=1)
+ 
+-    print("🤖 Initializing Gemini client...")
++    typer.echo("🤖 Initializing Gemini client...")
+     client = get_client(api_key)
+ 
+-    # The decision logic is based on the task and whether a path is provided
++    context: Optional[str] = ""
+     if path:
+-        if task in ["commits", "apply-improvements"]:
+-            print(f"❌ The task '{task}' only works with Git. Do not use the --path option.")
+-            raise typer.Exit(code=1)
+-        try:
+-            context = process_zip_file(str(path))
+-        except (FileNotFoundError, zipfile.BadZipFile, ValueError) as e:
+-            raise typer.Exit(code=1)
++        if task in [AITask.COMMITS, AITask.APPLY_IMPROVEMENTS]:
++            typer.secho(f"Error: Task '{task.value}' is incompatible with --path analysis.", fg=typer.colors.RED)
++            raise typer.Exit(code=1)
++        typer.echo(f"📦 Analyzing project from archive: {path}")
++        context = process_zip_file(path)
+     else:
+-        if task in ["commits", "apply-improvements"]:
+-            print("🔍 Analyzing changes in the Git 'staging area'...")
+-            context = get_staged_diff()
+-            if not context:
+-                print("✅ No modified files in the 'staging area'.")
+-                raise typer.Exit()
+-        elif task in ["documentation", "improvements"]:
+-            print("🔍 Reading files from the Git 'staging area'...")
+-            files = get_staged_files_content()
+-            if not files:
+-                print("✅ No files in the 'staging area'.")
+-                raise typer.Exit()
+-            context = "\n\n".join(
+-                f"--- Start of file: {p} ---\n{c}\n--- End of file: {p} ---"
+-                for p, c in files.items()
+-            )
+-        else:
+-            print(f"❌ Task '{task}' not supported.")
+-            raise typer.Exit(code=1)
++        context = _get_git_context(task)
+ 
+-    print("🧠 Generating AI analysis...")
+-    result = generate_ai_analysis(client, context, task, api_key, model)
++    if not context:
++        typer.echo("Exiting.")
++        raise typer.Exit()
+ 
+-    with open(output, "w") as f:
++    typer.echo(f"🧠 Generating AI analysis for task: '{task.value}'...")
++    result = generate_ai_analysis(client, context, task.value, model)
++
++    if not result:
++        typer.secho("❌ AI analysis failed to generate a result.", fg=typer.colors.RED)
++        raise typer.Exit(code=1)
++
++    Path(output).parent.mkdir(parents=True, exist_ok=True)
++    with open(output, "w", encoding="utf-8") as f:
+         f.write(result)
++    typer.secho(f"✅ Analysis complete. Result saved to '{output}'.", fg=typer.colors.GREEN)
+ 
+-    print(f"✅ Analysis completed successfully. Result saved to '{output}'.")
+-
+-    if ci_mode and task == "improvements" and result:
+-        print("\n🔥 CI mode: Improvements suggested. Returning error code.")
+-        raise typer.Exit(code=1)
++    if ci_mode and task == AITask.IMPROVEMENTS and "No improvements needed" not in result:
++        typer.secho("\n🔥 CI mode: Improvements suggested. Exiting with error code.", fg=typer.colors.YELLOW)
++        raise typer.Exit(code=1)
++
+ 
+ if __name__ == "__main__":
+     app()
+-
+-    os._exit(0)
+--- a/src/git_utils.py
++++ b/src/git_utils.py
+@@ -1,33 +1,66 @@
+ import git
+ from typing import Dict
+ 
+-def get_staged_files_content() -> Dict[str, str]:
++# A special Git SHA representing an empty tree.
++# Used for diffing against the initial commit.
++EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
++
++
++def get_staged_files_content(repo: git.Repo) -> Dict[str, str]:
+     """
+-    Returns a dictionary with the paths of the staged files as keys and their
+-    content as values. If the file is binary or can't be read, it will be
+-    skipped.
+-
+-    Returns:
+-        Dict[str, str]: A dictionary mapping the paths of the staged files to
+-            their content.
++    Gets the content of files that are in the Git staging area by reading their
++    blob objects from the index.
++    Handles the case of a repository with no commits (initial commit).
+     """
+-    repo = git.Repo(search_parent_directories=True)
+-    staged_files = {}
+-    for item in repo.index.diff("HEAD"):
+-        if item.a_path and item.change_type in ('A', 'M'):
++    staged_content = {}
++    # Diff the index against the HEAD commit. If no HEAD exists (initial commit),
++    # diff against the empty tree.
++    head_commit = repo.head.commit if repo.head.is_valid() else EMPTY_TREE_SHA
++    diffs = repo.index.diff(head_commit)
++
++    for diff in diffs:
++        # Process added ('A') or modified ('M') files.
++        # The blob object for the staged version is `diff.a_blob`.
++        if diff.change_type in ("A", "M") and diff.a_blob:
++            path = diff.a_path
+             try:
+-                with open(item.a_path, 'r', encoding='utf-8') as f:
+-                    staged_files[item.a_path] = f.read()
++                # Read content directly from the Git blob to avoid filesystem race conditions.
++                content = diff.a_blob.data_stream.read().decode("utf-8")
++                staged_content[path] = content
+             except (IOError, UnicodeDecodeError) as e:
+-                print(f"Warning: Failed to read the file {item.a_path}: {e}")
+-    return staged_files
++                print(f"Warning: Could not read content of staged file {path}: {e}")
+ 
+-def get_staged_diff() -> str:
++    return staged_content
++
++
++def get_staged_diff(repo: git.Repo) -> str:
+     """
+-    Returns the staged diff as a string.
++    Gets the diff of staged changes as a string.
++    Handles the case of a repository with no commits (initial commit).
++    """
++    if not repo.head.is_valid():
++        # For the initial commit, diff staged changes against the empty tree.
++        return repo.git.diff("--staged", "--no-color", EMPTY_TREE_SHA)
++
++    # For subsequent commits, diff staged changes against HEAD.
++    return repo.git.diff("--staged", "--no-color")
++
++
++def get_all_tracked_files_content(repo: git.Repo) -> Dict[str, str]:
+     """
+-    Returns the staged diff as a string.
++    Gets the content of all files currently tracked by Git in the repository
++    by reading them from the HEAD commit's tree.
+     """
+-    repo = git.Repo(search_parent_directories=True)
+-    return repo.git.diff('--staged')
++    tracked_files = {}
++    if not repo.head.is_valid():
++        # If there's no HEAD, the only "tracked" files are the staged ones.
++        return get_staged_files_content(repo)
++
++    for item in repo.head.commit.tree.traverse():
++        if item.type == "blob":  # 'blob' corresponds to a file
++            try:
++                content = item.data_stream.read().decode("utf-8")
++                tracked_files[item.path] = content
++            except (IOError, UnicodeDecodeError) as e:
++                print(f"Warning: Failed to read tracked file {item.path}: {e}")
++    return tracked_files
+
+```
