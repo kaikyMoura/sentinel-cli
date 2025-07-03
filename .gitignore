@@ -25,18 +25,21 @@ ENV/
 # Log files
 *.log
 
-# Migrations (se estiver usando banco de dados)
+# Migrations (if using a database)
 alembic.ini
 migrations/
 
-# Cachê de pacotes (se usar o pip)
+# Package cache (if using pip)
 pip-wheel-metadata/
 
-# Arquivos de configuração do VSCode
+# VSCode configuration files
 .vscode/
 
-# Arquivos de configuração do PyCharm
+# PyCharm configuration files
 .idea/
 
-# Arquivos de configuração do JetBrains (se usado)
+# JetBrains configuration files (if used)
 *.iml
+
+*.zip
+*.diff
