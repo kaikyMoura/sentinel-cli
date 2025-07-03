@@ -2,7 +2,7 @@
 
 ## 1. Project Overview
 
-The AI Code Analyzer is a command-line interface (CLI) tool designed to leverage the power of Google's Gemini large language models for automated code analysis. It provides developers with AI-driven insights to improve code quality, generate documentation, create conventional commit messages, and automatically refactor code.
+The Sentinel is a command-line interface (CLI) tool designed to leverage the power of Google's Gemini large language models for automated code analysis. It provides developers with AI-driven insights to improve code quality, generate documentation, create conventional commit messages, and automatically refactor code.
 
 The tool is built with Python using the Typer framework for a robust and user-friendly CLI experience. It can operate in two primary modes:
 1.  **Git Integration**: Analyzes changes in the Git staging area or all tracked files in the repository.
